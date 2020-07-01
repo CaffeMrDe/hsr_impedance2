@@ -31,6 +31,7 @@ robot_state::JointModelGroup* joint_model_group;
 #define T_SCALE 5
 #define Z_ERR	14.5 * F_SCALE
 
+ros::Publisher joint_state_pub; //joint listen
 
 void dumpDVec(const std::vector<double> & vec,int size, const std::string & name){
 
@@ -51,10 +52,21 @@ void foruceCallback(const geometry_msgs::Wrench::ConstPtr& msg){
 
 void startPosCallback(const sensor_msgs::JointState::ConstPtr& msg){
 
-	for(int i = 0; i < 6; i++)
-		startPos[i] = msg->position[i];
+    for(int i = 0; i < 6; i++)
+	startPos[i] = msg->position[i];
 
-	startPosOK = true;
+   if(startPosOK == false) {
+        startPos[6] = 0;
+        sensor_msgs::JointState sensor_compute_robot_state;
+        sensor_compute_robot_state.header.stamp = ros::Time::now();
+        sensor_compute_robot_state.name.resize(7);
+        sensor_compute_robot_state.position = startPos;
+        joint_state_pub.publish(sensor_compute_robot_state);
+        std::cout << "sensor_compute_robot_state size: " << sensor_compute_robot_state.position.size() << std::endl;
+        startPosOK = true;
+    }
+
+
 
 }
 
@@ -174,7 +186,7 @@ int main(int argc, char **argv){
 	ros::AsyncSpinner spinner(2);
   	spinner.start();
 
-	ros::Publisher joint_state_pub;
+
 
 	startPosOK = true;
 	isSim = true;
@@ -219,7 +231,7 @@ int main(int argc, char **argv){
         startPos[3] = 0;    startPos[4] = 1.570785397386886;     startPos[5] = 0;
 
 	sensor_msgs::JointState joint_state;
-	ros::Rate loop_rate(25);
+	ros::Rate loop_rate(48);
 
 	// 获取关节名
 	const std::vector<std::string> &joint_names = joint_model_group->getJointModelNames();
