@@ -9,7 +9,9 @@
 #include <eigen_conversions/eigen_msg.h>
 #include <tf/LinearMath/Quaternion.h>
 #include <tf/LinearMath/Vector3.h>	
-
+#include <industrial_msgs/RobotStatus.h>
+#include <chrono>
+#include <thread>
 #define DEBUG
 
 Impedance CartesianImpedance;		// 算法实例
@@ -20,9 +22,9 @@ std::vector<double> startPos(6);	// 保存起始关节角数据
 std::string end_link;
 std::string group;
 
-bool startPosOK;
+bool startPosOK, robotStatus;
 bool isSim = true;
-
+bool robot_servo_status = true;
 robot_model::RobotModelPtr kinematic_model;
 robot_state::RobotStatePtr kinematic_state;
 robot_state::JointModelGroup* joint_model_group;
@@ -52,24 +54,43 @@ void foruceCallback(const geometry_msgs::Wrench::ConstPtr& msg){
 
 void startPosCallback(const sensor_msgs::JointState::ConstPtr& msg){
 
-    for(int i = 0; i < 6; i++)
-	startPos[i] = msg->position[i];
+
+   for(int i = 0; i < 6; i++)
+	 startPos[i] = msg->position[i];
+
+	if(isSim){
+			startPos[0] = 0; startPos[1] = -1.5707963331877837;     startPos[2] = 3.14;
+			startPos[3] = 0;    startPos[4] = 1.570785397386886;     startPos[5] = 0;
+	}
 
    if(startPosOK == false) {
-        startPos[6] = 0;
-        sensor_msgs::JointState sensor_compute_robot_state;
-        sensor_compute_robot_state.header.stamp = ros::Time::now();
-        sensor_compute_robot_state.name.resize(7);
-        sensor_compute_robot_state.position = startPos;
-        joint_state_pub.publish(sensor_compute_robot_state);
-        std::cout << "sensor_compute_robot_state size: " << sensor_compute_robot_state.position.size() << std::endl;
-        startPosOK = true;
-    }
 
+        startPos.push_back(0);       
+        startPosOK = true;
+        //startPos = std::vector<double>(6);
+    }
 
 
 }
 
+
+void robotStausCallback(const industrial_msgs::RobotStatusConstPtr& msg){
+
+	if((!robotStatus ) || isSim )
+	{		
+		if( msg->in_motion.val == 0)
+		{	robotStatus = true;
+        	robot_servo_status = true;
+		}	
+	}
+
+	if(msg->in_error.val != 0 || msg->in_motion.val == 0){
+		robot_servo_status = false;
+		std::cout << "msg->in_motion.val : "<< std::to_string(msg->in_motion.val)<<std::endl;
+	}
+	//msg->
+
+}
 
 /***********************算法初始化**********************************/
 void initImped(){
@@ -111,11 +132,12 @@ void doit(const std::vector<double> &in, std::vector<double> &out){
 	//force[0] = 0; force[1] = 1; force[10] = 0; force[3] = 0; force[4] = 0; force[5] = 0;
 	
 	// 计算偏移值
-	force[2] += Z_ERR;
+	//force[2] += Z_ERR;
 	CartesianImpedance.reImpedance(force, ERROR_ImpAcc, ERROR_ImpVel, Xa);
 
-	X_offset = Xa[0];Y_offset = Xa[1];//Z_offset = Xa[2];
-	//A_offset = Xa[3];B_offset = Xa[4];C_offset = Xa[5];
+	X_offset = Xa[0];Y_offset = Xa[1];
+	Z_offset = Xa[2];
+	A_offset = Xa[3];B_offset = Xa[4];C_offset = Xa[5];
 
 
 	// 获取当前的末端姿态
@@ -124,7 +146,8 @@ void doit(const std::vector<double> &in, std::vector<double> &out){
 	geometry_msgs::Pose pose;
 	tf::poseEigenToMsg(end_effector_state, pose);
 
-        dumpDVec(force, 6, "current force ");
+	dumpDVec(in, 6,"current joint pose: ");
+    dumpDVec(force, 6, "current force ");
 #ifdef DEBUG
 	    ROS_INFO_STREAM("compute offset pose: "<< X_offset<<" "<< Y_offset<<" "<< Z_offset<<" "<< A_offset<<" "<< B_offset<<" "<< C_offset<<" ");
 #endif
@@ -166,7 +189,7 @@ void doit(const std::vector<double> &in, std::vector<double> &out){
 	// 返回计算后的关节角	
 	std::vector<double> joint_values;
 	kinematic_state->copyJointGroupPositions(joint_model_group, joint_values);
-	dumpDVec(joint_values, 6, "** copyJointGroupPositions ");
+	dumpDVec(joint_values, 6, "<----- copyJointGroupPositions : ");
 	// 当不处于虚拟环境时 发送的是关节角偏移值
 	//if(!isSim)
 	//	for(int i = 0; i < 6; i ++)
@@ -183,13 +206,13 @@ int main(int argc, char **argv){
 	ros::NodeHandle n;
 
 	Impedance CartesianImpedance;
-	ros::AsyncSpinner spinner(2);
+	ros::AsyncSpinner spinner(3);
   	spinner.start();
 
 
 
-	startPosOK = true;
-	isSim = true;
+	startPosOK = false;
+	isSim = false;
 
 	if(argc == 2)
 		if(strcmp(argv[1], "true") == 0){
@@ -205,16 +228,15 @@ int main(int argc, char **argv){
 	n.param<std::string>("impedance_group", group, "arm");
 
 	// 订阅传感器数据
-	ros::Subscriber pose_sub = n.subscribe("daq_data", 1000, foruceCallback);
+	ros::Subscriber pose_sub = n.subscribe("daq_data", 1, foruceCallback);
 
-	// 订阅机械臂起始关节角
-	ros::Subscriber start_pos_sub = n.subscribe("start_pos", 1000, startPosCallback);
+
 
 	// 发布关节角数据
 	if(isSim)
-		joint_state_pub = n.advertise<sensor_msgs::JointState>("joint_states", 1000);
+		joint_state_pub = n.advertise<sensor_msgs::JointState>("joint_states", 1);
 	else
-		joint_state_pub = n.advertise<sensor_msgs::JointState>("impedance_err", 1000);
+		joint_state_pub = n.advertise<sensor_msgs::JointState>("impedance_err", 1);
 
 	// 初始化算法
 	initImped();
@@ -224,23 +246,63 @@ int main(int argc, char **argv){
 	
 	// 测试数据
 	std::vector<double> out(6);
-        //startPos[0] = 2.1411815164231166e-05; startPos[2] = 1.5707963331877837;     startPos[4] = -1.5707989151749278;
-        //startPos[1] = -1.5707750110586352;    startPos[3] = -1.570785397386886;     startPos[5] = -2.216798209886406e-06;
-
-        startPos[0] = 0; startPos[1] = -1.5707963331877837;     startPos[2] = 3.14;
-        startPos[3] = 0;    startPos[4] = 1.570785397386886;     startPos[5] = 0;
+    //startPos[0] = 0; startPos[1] = -1.5707963331877837;     startPos[2] = 3.14;
+    //startPos[3] = 0;    startPos[4] = 1.570785397386886;     startPos[5] = 0;
 
 	sensor_msgs::JointState joint_state;
-	ros::Rate loop_rate(48);
+	ros::Rate loop_rate(26);
 
 	// 获取关节名
 	const std::vector<std::string> &joint_names = joint_model_group->getJointModelNames();
 	//std::cout << "joint size" << joint_names.size() << std::endl;
-	for(int i = 0; i < joint_names.size(); i++)
-		std::cout << "joint" << i << " = " << joint_names[i] << std::endl;	
+	//for(int i = 0; i < joint_names.size(); i++)
+	//	std::cout << "joint" << i << " = " << joint_names[i] << std::endl;	
+
+
+
+
+	// 订阅机械臂起始关节角
+    startPosOK = false;
+	//ros::Subscriber start_pos_sub = n.subscribe("start_pos", 1000, startPosCallback);
+    ros::Subscriber start_pos_sub = n.subscribe("joint_states", 1, startPosCallback);
+	
+	//等待获取初始点
+    while(startPosOK == false);		
+
+    if(isSim == false){
+       	start_pos_sub.shutdown();
+		sensor_msgs::JointState sensor_compute_robot_state;
+    	sensor_compute_robot_state.header.stamp = ros::Time::now();
+    	sensor_compute_robot_state.name.resize(7);
+
+   		sensor_compute_robot_state.position = startPos;
+    	joint_state_pub.publish(sensor_compute_robot_state);
+        ROS_INFO_STREAM( "sensor_compute_robot_state size: " << sensor_compute_robot_state.position.size() );
+    	dumpDVec(sensor_compute_robot_state.position, 7,"sensor_compute_robot_state: ");
+
+	}
+
+
+	//等待初始状态与机器人状态获取成功
+    robotStatus = false;
+    ROS_INFO_STREAM("ready the robot status ok ...");
+	
+	ros::Subscriber robot_status_sub = n.subscribe("/robot_status", 1, robotStausCallback);
+ 	//等待机器人状态成功
+    while(robot_servo_status == false);	
+
+
+    ROS_INFO_STREAM("get startPosOK...."<< startPosOK <<" "<<robotStatus);
+
 	while(ros::ok()){
-		if(startPosOK)
-			doit(startPos, out);	
+        //pose_sub.shutdown();
+		//start_pos_sub.shutdown();
+		auto start = std::chrono::system_clock::now();
+		if(!robot_servo_status)
+			break;
+		doit(startPos, out);	
+        //pose_sub = n.subscribe("daq_data", 1000, foruceCallback);  
+  		//start_pos_sub = n.subscribe("joint_states", 1000, startPosCallback);
 
 		joint_state.header.stamp = ros::Time::now();
 		joint_state.name.resize(6);
@@ -249,11 +311,15 @@ int main(int argc, char **argv){
 		for(int i = 0; i < 6; i++)
 			joint_state.name[i] =  joint_names[i];
 		
-		if(startPosOK)
-			joint_state_pub.publish(joint_state);
-                ROS_ERROR_STREAM("<---------------------------------------------------->");
-		loop_rate.sleep();
+
+	    joint_state_pub.publish(joint_state);
+        ROS_ERROR_STREAM("<---------------------------------------------------->");
+		//loop_rate.sleep(); start +
+		std::this_thread::sleep_until( start +std::chrono::milliseconds(40));
+		//break;
 	}
+    sleep(0.1);
+	ROS_ERROR_STREAM("robot_servo_status error exit! ");
 
 	// 进入消息循环
 	//ros::spin();

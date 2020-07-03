@@ -1,10 +1,14 @@
 #include "Impedance.h"
 //成员函数定义
-
+#include "math.h"
+using namespace std;
 Impedance::Impedance(){
 	ts = 0.04;
-	m_Mass[0] = 1.0;m_Mass[1] = 1.0;m_Mass[2] = 1.0;
-	m_Mass[3] = 1.0;m_Mass[4] = 1.0;m_Mass[5] = 1.0;
+	//m_Mass[0] = 1.0;m_Mass[1] = 1.0;m_Mass[2] = 1.0;
+	//m_Mass[3] = 1.0;m_Mass[4] = 1.0;m_Mass[5] = 1.0;
+
+	m_Mass[0] = 1.6;m_Mass[1] = 1.6;m_Mass[2] = 3.2;
+	m_Mass[3] = 0.4;m_Mass[4] = 0.3;m_Mass[5] = 0.2;
 }
 
 void Impedance::setStiffness(double Stiffness[6])
@@ -38,13 +42,13 @@ void Impedance::reImpedance( std::vector<double> &Force,int &ERROR_ImpAcc, int &
 	{
 		ddXa[i] = ( Force[i] - m_Damping[i]*dXa_1[i] - m_Stiffness[i]*Xa_1[i] ) / m_Mass[i];
 		//阻抗偏移加速度限制
-		if(ddXa[i] > 10.0 || ddXa[i] < -10.0)
+		if(fabs(ddXa[i]) > 0.3)
 			ERROR_ImpAcc = i;
 		
 		
 		dXa[i] = dXa_1[i] + ddXa[i] * ts;
 		//阻抗偏移速度限制
-		if(dXa[i] > 2.0 || dXa[i] < -2.0)
+		if(fabs(dXa[i]) >0.5)
 			ERROR_ImpVel = i;
 		
 		
